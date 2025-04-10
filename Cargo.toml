@@ -1,6 +1,6 @@
 [package]
 name = "loglevel"
-version = "0.1.0"
+version = "0.2.0"
 description = "Simple way to set your log level "
 authors = ["Dr. Maxim Orlovsky <orlovsky@ubideco.org>"]
 keywords = ["generics", "core", "wrap", "patterns"]
@@ -14,7 +14,7 @@ rust-version = "1.75.0"
 
 [dependencies]
 amplify = "4.8.0"
-log = { version = "0.4.22", features = ["max_level_trace", "release_max_level_trace"] }
+log = { version = "0.4.22", features = ["max_level_trace", "release_max_level_debug"] }
 env_logger = "0.11.8"
 
 [features]
