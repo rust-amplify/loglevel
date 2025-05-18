@@ -2,11 +2,10 @@
 
 //! Simple way to set your log level
 
-extern crate amplify;
 use clap::{Arg, Command};
 use std::env;
-use std::fmt;
 use std::error::Error;
+use std::fmt;
 
 use log::LevelFilter;
 
@@ -44,11 +43,15 @@ impl fmt::Display for LogLevel {
 }
 
 impl From<u8> for LogLevel {
-    fn from(val: u8) -> Self { Self::from_verbosity_flag_count(val) }
+    fn from(val: u8) -> Self {
+        Self::from_verbosity_flag_count(val)
+    }
 }
 
 impl From<LogLevel> for u8 {
-    fn from(log_level: LogLevel) -> Self { log_level.verbosity_flag_count() }
+    fn from(log_level: LogLevel) -> Self {
+        log_level.verbosity_flag_count()
+    }
 }
 
 impl From<LogLevel> for LevelFilter {
@@ -66,7 +69,9 @@ impl From<LogLevel> for LevelFilter {
 
 impl LogLevel {
     /// Indicates number of required verbosity flags
-    pub fn verbosity_flag_count(&self) -> u8 { *self as u8 }
+    pub fn verbosity_flag_count(&self) -> u8 {
+        *self as u8
+    }
 
     /// Logs a warning if the verbosity level exceeds 5, as it will be treated as `Trace`.
     pub fn from_verbosity_flag_count(level: u8) -> Self {
@@ -83,7 +88,6 @@ impl LogLevel {
         }
     }
 
-
     /// Parses verbosity level from command-line arguments using `-v` flags.
     ///
     /// # Errors
@@ -95,6 +99,7 @@ impl LogLevel {
     /// let log_level = LogLevel::from_args().expect("Failed to parse arguments");
     /// log_level.apply().expect("Failed to initialize logger");
     /// ```
+    ///
     pub fn from_args() -> Result<Self, Box<dyn Error>> {
         let matches = Command::new(env!("CARGO_PKG_NAME"))
             .arg(
@@ -105,7 +110,7 @@ impl LogLevel {
             )
             .get_matches();
 
-        let verbosity = matches.get_count("verbose"); 
+        let verbosity = matches.get_count("verbose");
         Ok(Self::from_verbosity_flag_count(verbosity))
     }
 
@@ -127,7 +132,11 @@ impl LogLevel {
     /// // Custom RUST_LOG configuration
     /// LogLevel::Debug.apply_custom(Some("my_module=trace,info".to_string()), true).expect("Failed to initialize logger");
     /// ```
-    pub fn apply_custom(&self, custom_log: Option<String>, override_existing: bool) -> Result<(), Box<dyn Error>> {
+    pub fn apply_custom(
+        &self,
+        custom_log: Option<String>,
+        override_existing: bool,
+    ) -> Result<(), Box<dyn Error>> {
         static INIT: std::sync::Once = std::sync::Once::new();
         let filter = LevelFilter::from(*self);
         INIT.call_once(|| {
@@ -136,11 +145,13 @@ impl LogLevel {
                 env::set_var("RUST_LOG", log_value);
             }
 
-            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(self.to_string()))
-                .filter_level(filter.into())
-                .try_init()
-                .expect("Logger instantiation failed");
-         });
+            env_logger::Builder::from_env(
+                env_logger::Env::default().default_filter_or(self.to_string()),
+            )
+            .filter_level(filter)
+            .try_init()
+            .expect("Logger instantiation failed");
+        });
 
         Ok(())
     }
