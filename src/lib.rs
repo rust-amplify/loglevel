@@ -2,11 +2,10 @@
 
 //! Simple way to set your log level
 
-use clap::{Arg, Command};
-use std::env;
 use std::error::Error;
-use std::fmt;
+use std::{env, fmt};
 
+use clap::{Arg, Command};
 use log::LevelFilter;
 
 /// Represents desired logging verbosity level
@@ -43,15 +42,11 @@ impl fmt::Display for LogLevel {
 }
 
 impl From<u8> for LogLevel {
-    fn from(val: u8) -> Self {
-        Self::from_verbosity_flag_count(val)
-    }
+    fn from(val: u8) -> Self { Self::from_verbosity_flag_count(val) }
 }
 
 impl From<LogLevel> for u8 {
-    fn from(log_level: LogLevel) -> Self {
-        log_level.verbosity_flag_count()
-    }
+    fn from(log_level: LogLevel) -> Self { log_level.verbosity_flag_count() }
 }
 
 impl From<LogLevel> for LevelFilter {
@@ -69,9 +64,7 @@ impl From<LogLevel> for LevelFilter {
 
 impl LogLevel {
     /// Indicates number of required verbosity flags
-    pub fn verbosity_flag_count(&self) -> u8 {
-        *self as u8
-    }
+    pub fn verbosity_flag_count(&self) -> u8 { *self as u8 }
 
     /// Logs a warning if the verbosity level exceeds 5, as it will be treated as `Trace`.
     pub fn from_verbosity_flag_count(level: u8) -> Self {
@@ -99,7 +92,6 @@ impl LogLevel {
     /// let log_level = LogLevel::from_args().expect("Failed to parse arguments");
     /// log_level.apply().expect("Failed to initialize logger");
     /// ```
-    ///
     pub fn from_args() -> Result<Self, Box<dyn Error>> {
         let matches = Command::new(env!("CARGO_PKG_NAME"))
             .arg(
@@ -126,11 +118,15 @@ impl LogLevel {
     /// # Examples
     /// ```
     /// use loglevel::LogLevel;
-    /// LogLevel::Info.apply_custom(None, false).expect("Failed to initialize logger");
+    /// LogLevel::Info
+    ///     .apply_custom(None, false)
+    ///     .expect("Failed to initialize logger");
     /// log::info!("This message will be logged");
     ///
     /// // Custom RUST_LOG configuration
-    /// LogLevel::Debug.apply_custom(Some("my_module=trace,info".to_string()), true).expect("Failed to initialize logger");
+    /// LogLevel::Debug
+    ///     .apply_custom(Some("my_module=trace,info".to_string()), true)
+    ///     .expect("Failed to initialize logger");
     /// ```
     pub fn apply_custom(
         &self,
@@ -167,7 +163,5 @@ impl LogLevel {
     /// LogLevel::Info.apply().expect("Failed to initialize logger");
     /// log::info!("This message will be logged");
     /// ```
-    pub fn apply(self) -> Result<(), Box<dyn Error>> {
-        self.apply_custom(None, false)
-    }
+    pub fn apply(self) -> Result<(), Box<dyn Error>> { self.apply_custom(None, false) }
 }

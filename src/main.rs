@@ -1,5 +1,6 @@
-use loglevel::LogLevel;
 use std::error::Error;
+
+use loglevel::LogLevel;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let log_level = LogLevel::from_args()?;
