@@ -8,7 +8,7 @@ use std::{env, fmt};
 use clap::{Arg, Command};
 use log::LevelFilter;
 
-/// Represents desired logging verbosity level
+/// Represents the desired logging verbosity level
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum LogLevel {
     /// Do not log anything. Corresponds to zero verbosity flags.
