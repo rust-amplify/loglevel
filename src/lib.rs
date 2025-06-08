@@ -5,8 +5,12 @@
 use std::error::Error;
 use std::{env, fmt};
 
+#[cfg(feature = "json")]
+use chrono::Utc;
 use clap::{Arg, Command};
-use log::LevelFilter;
+use log::{LevelFilter, Record};
+#[cfg(feature = "json")]
+use serde::Serialize;
 
 /// Represents desired logging verbosity level
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -26,6 +30,14 @@ pub enum LogLevel {
     Trace,
 }
 
+#[cfg(feature = "json")]
+#[derive(Serialize)]
+struct JsonLog<'a> {
+    level: &'static str,
+    message: &'a str,
+    timestamp: String,
+}
+
 impl fmt::Display for LogLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
@@ -37,6 +49,8 @@ impl fmt::Display for LogLevel {
             LogLevel::Trace => "trace",
         };
 
+        // Just write the string representation of the enum variant to the formatter.
+        // In the case of LogLevel, all variants are a single word, so this is sufficient.
         write!(f, "{}", s)
     }
 }
@@ -100,10 +114,16 @@ impl LogLevel {
                     .action(clap::ArgAction::Count)
                     .help("Increase verbosity level (e.g., -vvv for Info)"),
             )
+            .arg(
+                Arg::new("json")
+                    .long("json")
+                    .action(clap::ArgAction::SetTrue)
+                    .help("Enable JSON formatting"),
+            )
             .get_matches();
 
-        let verbosity = matches.get_count("verbose");
-        Ok(Self::from_verbosity_flag_count(verbosity))
+        let matches = matches.get_count("verbose");
+        Ok(Self::from_verbosity_flag_count(matches))
     }
 
     /// Applies the log level to the system with optional custom `RUST_LOG` configuration.
@@ -119,19 +139,20 @@ impl LogLevel {
     /// ```
     /// use loglevel::LogLevel;
     /// LogLevel::Info
-    ///     .apply_custom(None, false)
+    ///     .apply_custom(None, false, false)
     ///     .expect("Failed to initialize logger");
     /// log::info!("This message will be logged");
     ///
     /// // Custom RUST_LOG configuration
     /// LogLevel::Debug
-    ///     .apply_custom(Some("my_module=trace,info".to_string()), true)
+    ///     .apply_custom(Some("my_module=trace,info".to_string()), true, false)
     ///     .expect("Failed to initialize logger");
     /// ```
     pub fn apply_custom(
         &self,
         custom_log: Option<String>,
         override_existing: bool,
+        json: bool,
     ) -> Result<(), Box<dyn Error>> {
         static INIT: std::sync::Once = std::sync::Once::new();
         let filter = LevelFilter::from(*self);
@@ -141,12 +162,40 @@ impl LogLevel {
                 env::set_var("RUST_LOG", log_value);
             }
 
-            env_logger::Builder::from_env(
+            let mut builder = env_logger::Builder::from_env(
                 env_logger::Env::default().default_filter_or(self.to_string()),
-            )
-            .filter_level(filter)
-            .try_init()
-            .expect("Logger instantiation failed");
+            );
+            // .filter_level(filter)
+            // .try_init()
+            // .expect("Logger instantiation failed");
+
+            if json {
+                #[cfg(feature = "json")]
+                {
+                    builder.format(|buf, record: &Record| {
+                        let json_log = JsonLog {
+                            level: record.level().as_str(),
+                            message: &record.args().to_string(),
+                            timestamp: Utc::now().to_rfc3339(),
+                        };
+
+                        buf.write_fmt(format_args!(
+                            "{}\n",
+                            serde_json::to_string(&json_log).unwrap()
+                        ))
+                    });
+                }
+
+                #[cfg(not(feature = "json"))]
+                {
+                    panic!("JSON output requires the `json` feature")
+                }
+            }
+
+            builder
+                .filter_level(filter)
+                .try_init()
+                .expect("Json output failed, because its requires the json flag");
         });
 
         Ok(())
@@ -163,5 +212,41 @@ impl LogLevel {
     /// LogLevel::Info.apply().expect("Failed to initialize logger");
     /// log::info!("This message will be logged");
     /// ```
-    pub fn apply(self) -> Result<(), Box<dyn Error>> { self.apply_custom(None, false) }
+    pub fn apply(self) -> Result<(), Box<dyn Error>> { self.apply_custom(None, false, false) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_verbosity_flag_count() {
+        assert_eq!(LogLevel::None.verbosity_flag_count(), 0);
+        assert_eq!(LogLevel::Error.verbosity_flag_count(), 1);
+        assert_eq!(LogLevel::Warn.verbosity_flag_count(), 2);
+        assert_eq!(LogLevel::Info.verbosity_flag_count(), 3);
+        assert_eq!(LogLevel::Debug.verbosity_flag_count(), 4);
+        assert_eq!(LogLevel::Trace.verbosity_flag_count(), 5);
+    }
+
+    #[test]
+    fn test_from_verbosity_flag_count() {
+        assert_eq!(LogLevel::from_verbosity_flag_count(0), LogLevel::None);
+        assert_eq!(LogLevel::from_verbosity_flag_count(1), LogLevel::Error);
+        assert_eq!(LogLevel::from_verbosity_flag_count(2), LogLevel::Warn);
+        assert_eq!(LogLevel::from_verbosity_flag_count(3), LogLevel::Info);
+        assert_eq!(LogLevel::from_verbosity_flag_count(4), LogLevel::Debug);
+        assert_eq!(LogLevel::from_verbosity_flag_count(5), LogLevel::Trace);
+        assert_eq!(LogLevel::from_verbosity_flag_count(6), LogLevel::Trace);
+    }
+
+    #[test]
+    #[cfg(feature = "json")]
+    fn test_json_logging() {
+        LogLevel::Info
+            .apply_custom(None, false, true)
+            .expect("Failed to initialize logger");
+        log::info!("This is a JSON log");
+        // Should output: {"level":"info","message":"This is a JSON log","timestamp":"..."}
+    }
 }
