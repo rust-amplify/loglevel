@@ -26,11 +26,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
         .get_matches();
 
-   
     let json = matches.get_flag("json");
     //let log_level = LogLevel::from_verbosity_flag_count(matches.get_count("verbose"));
     let log_level = if let Some(custom_level) = matches.get_many::<String>("custom-level") {
-        let custom = custom_level.last().ok_or("No custom level provided")?; 
+        let custom = custom_level.last().ok_or("No custom level provided")?;
         let parts: Vec<&str> = custom.split('=').collect();
         if parts.len() != 2 {
             return Err("Invalid custom level format".into());
@@ -46,15 +45,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         {
             return Err("Invalid custom level format".into());
         }
-    }
-    else {
+    } else {
         LogLevel::from_verbosity_flag_count(matches.get_count("verbose"))
     };
 
-   log_level.apply_custom(None, false, json)?;
-    let log_level = LogLevel::from_args();
-
-    log_level.apply();
+    log_level.apply_custom(None, false, json)?;
 
     log::error!("This is an error");
     log::warn!("This is a warning");

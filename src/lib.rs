@@ -4,7 +4,6 @@
 
 use std::error::Error;
 use std::io::Write;
-
 use std::{env, fmt};
 
 #[cfg(feature = "json")]
@@ -32,11 +31,13 @@ pub struct CustomLogLevel {
 #[cfg(feature = "custom_level")]
 impl CustomLogLevel {
     pub fn new(name: String, value: u8) -> Self { Self { name, value } }
+
     pub fn name(&self) -> &str { self.name.as_str() }
     pub fn value(&self) -> u8 { self.value }
 }
 
-
+/// Represents desired logging verbosity level
+#[repr(u8)]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum LogLevel {
     /// Do not log anything. Corresponds to zero verbosity flags.
@@ -119,8 +120,6 @@ impl LogLevel {
             LogLevel::Custom(custom) => custom.value,
         }
     }
-    /// Indicates the number of required verbosity flags
-    pub fn verbosity_flag_count(&self) -> u8 { *self as u8 }
 
     /// Logs a warning if the verbosity level exceeds 5, as it will be treated as `Trace`.
     pub fn from_verbosity_flag_count(level: u8) -> Self {
@@ -144,16 +143,16 @@ impl LogLevel {
 
     /// Parses verbosity level from command-line arguments using `-v` flags.
     ///
-    /// # Panics
-    /// If command-line parsing fails.
+    /// # Errors
+    /// Returns an error if command-line parsing fails.
     ///
     /// # Examples
     /// ```
     /// use loglevel::LogLevel;
-    /// let log_level = LogLevel::from_args();
-    /// log_level.apply();
+    /// let log_level = LogLevel::from_args().expect("Failed to parse arguments");
+    /// log_level.apply().expect("Failed to initialize logger");
     /// ```
-    pub fn from_args() -> Self {
+    pub fn from_args() -> Result<Self, Box<dyn Error>> {
         let matches = Command::new(env!("CARGO_PKG_NAME"))
             .arg(
                 Arg::new("verbose")
@@ -190,33 +189,29 @@ impl LogLevel {
             }
         }
         Ok(Self::from_verbosity_flag_count(verbosity))
-      
-        Self::from_verbosity_flag_count(verbosity)
     }
 
-    /// Applies the log level to the system with an optional custom `RUST_LOG` configuration.
+    /// Applies the log level to the system with optional custom `RUST_LOG` configuration.
     ///
     /// If `custom_log` is provided, it is used as the `RUST_LOG` value. If `override_existing` is
     /// `true`, the `RUST_LOG` environment variable is set even if already defined. Otherwise, the
     /// existing `RUST_LOG` is respected.
     ///
-    /// # Panics
-    /// If the logger fails to initialize.
-    /// 
+    /// # Errors
+    /// Returns an error if the logger fails to initialize.
+    ///
     /// # Examples
     /// ```
     /// use loglevel::LogLevel;
     /// LogLevel::Info
     ///     .apply_custom(None, false, false)
     ///     .expect("Failed to initialize logger");
-    ///     .apply_custom(None, false);
     /// log::info!("This message will be logged");
     ///
     /// // Custom RUST_LOG configuration
     /// LogLevel::Debug
     ///     .apply_custom(Some("my_module=trace,info".to_string()), true, false)
     ///     .expect("Failed to initialize logger");
-    ///     .apply_custom(Some("my_module=trace,info".to_string()), true)
     /// ```
     pub fn apply_custom(
         &self,
@@ -224,7 +219,6 @@ impl LogLevel {
         override_existing: bool,
         json: bool,
     ) -> Result<(), Box<dyn Error + 'static>> {
-    )  {
         static INIT: std::sync::Once = std::sync::Once::new();
         let filter = LevelFilter::from(self.clone());
         INIT.call_once(|| {
@@ -256,11 +250,6 @@ impl LogLevel {
                         let json_str = serde_json::to_string(&json_log)?;
                         buf.write_all(json_str.as_bytes())?;
                         buf.write_all(b"\n")
-
-                        // buf.write_fmt(format_args!(
-                        //     "{}\n",
-                        //     serde_json::to_string(&json_log).unwrap()
-                        // ))
                     });
                 }
 
@@ -270,22 +259,21 @@ impl LogLevel {
                 }
             }
 
-            builder
-                .filter_level(filter)
-                .try_init()
-                .expect("Logger initiation failed");
+            builder.filter_level(filter).try_init().expect("Logger");
         });
+
+        Ok(())
     }
 
     /// Applies the log level to the system, respecting existing `RUST_LOG` settings.
     ///
-    /// # Panics
-    /// If the logger fails to initialize.
+    /// # Errors
+    /// Returns an error if the logger fails to initialize.
     ///
     /// # Examples
     /// ```
     /// use loglevel::LogLevel;
-    /// LogLevel::Info.apply();
+    /// LogLevel::Info.apply().expect("Failed to initialize logger");
     /// log::info!("This message will be logged");
     /// ```
     pub fn apply(self) -> Result<(), Box<dyn Error>> { self.apply_custom(None, false, false) }
@@ -343,5 +331,4 @@ mod tests {
             .expect("Failed to initialize logger");
         log::info!("This is a custom log");
     }
-    pub fn apply(self) { self.apply_custom(None, false) }
 }
