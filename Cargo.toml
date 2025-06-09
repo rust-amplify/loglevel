@@ -1,6 +1,6 @@
 [package]
 name = "loglevel"
-version = "0.2.0"
+version = "0.4.0"
 description = "Simple way to set your log level "
 authors = ["Dr. Maxim Orlovsky <orlovsky@ubideco.org>"]
 keywords = ["logging", "log", "cli"]

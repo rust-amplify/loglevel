@@ -52,6 +52,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
    log_level.apply_custom(None, false, json)?;
+    let log_level = LogLevel::from_args();
+
+    log_level.apply();
 
     log::error!("This is an error");
     log::warn!("This is a warning");

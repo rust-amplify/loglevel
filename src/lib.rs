@@ -4,6 +4,7 @@
 
 use std::error::Error;
 use std::io::Write;
+
 use std::{env, fmt};
 
 #[cfg(feature = "json")]
@@ -35,8 +36,7 @@ impl CustomLogLevel {
     pub fn value(&self) -> u8 { self.value }
 }
 
-/// Represents desired logging verbosity level
-#[repr(u8)]
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum LogLevel {
     /// Do not log anything. Corresponds to zero verbosity flags.
@@ -119,6 +119,8 @@ impl LogLevel {
             LogLevel::Custom(custom) => custom.value,
         }
     }
+    /// Indicates the number of required verbosity flags
+    pub fn verbosity_flag_count(&self) -> u8 { *self as u8 }
 
     /// Logs a warning if the verbosity level exceeds 5, as it will be treated as `Trace`.
     pub fn from_verbosity_flag_count(level: u8) -> Self {
@@ -142,16 +144,16 @@ impl LogLevel {
 
     /// Parses verbosity level from command-line arguments using `-v` flags.
     ///
-    /// # Errors
-    /// Returns an error if command-line parsing fails.
+    /// # Panics
+    /// If command-line parsing fails.
     ///
     /// # Examples
     /// ```
     /// use loglevel::LogLevel;
-    /// let log_level = LogLevel::from_args().expect("Failed to parse arguments");
-    /// log_level.apply().expect("Failed to initialize logger");
+    /// let log_level = LogLevel::from_args();
+    /// log_level.apply();
     /// ```
-    pub fn from_args() -> Result<Self, Box<dyn Error>> {
+    pub fn from_args() -> Self {
         let matches = Command::new(env!("CARGO_PKG_NAME"))
             .arg(
                 Arg::new("verbose")
@@ -188,29 +190,33 @@ impl LogLevel {
             }
         }
         Ok(Self::from_verbosity_flag_count(verbosity))
+      
+        Self::from_verbosity_flag_count(verbosity)
     }
 
-    /// Applies the log level to the system with optional custom `RUST_LOG` configuration.
+    /// Applies the log level to the system with an optional custom `RUST_LOG` configuration.
     ///
     /// If `custom_log` is provided, it is used as the `RUST_LOG` value. If `override_existing` is
     /// `true`, the `RUST_LOG` environment variable is set even if already defined. Otherwise, the
     /// existing `RUST_LOG` is respected.
     ///
-    /// # Errors
-    /// Returns an error if the logger fails to initialize.
-    ///
+    /// # Panics
+    /// If the logger fails to initialize.
+    /// 
     /// # Examples
     /// ```
     /// use loglevel::LogLevel;
     /// LogLevel::Info
     ///     .apply_custom(None, false, false)
     ///     .expect("Failed to initialize logger");
+    ///     .apply_custom(None, false);
     /// log::info!("This message will be logged");
     ///
     /// // Custom RUST_LOG configuration
     /// LogLevel::Debug
     ///     .apply_custom(Some("my_module=trace,info".to_string()), true, false)
     ///     .expect("Failed to initialize logger");
+    ///     .apply_custom(Some("my_module=trace,info".to_string()), true)
     /// ```
     pub fn apply_custom(
         &self,
@@ -218,6 +224,7 @@ impl LogLevel {
         override_existing: bool,
         json: bool,
     ) -> Result<(), Box<dyn Error + 'static>> {
+    )  {
         static INIT: std::sync::Once = std::sync::Once::new();
         let filter = LevelFilter::from(self.clone());
         INIT.call_once(|| {
@@ -268,19 +275,17 @@ impl LogLevel {
                 .try_init()
                 .expect("Logger initiation failed");
         });
-
-        Ok(())
     }
 
     /// Applies the log level to the system, respecting existing `RUST_LOG` settings.
     ///
-    /// # Errors
-    /// Returns an error if the logger fails to initialize.
+    /// # Panics
+    /// If the logger fails to initialize.
     ///
     /// # Examples
     /// ```
     /// use loglevel::LogLevel;
-    /// LogLevel::Info.apply().expect("Failed to initialize logger");
+    /// LogLevel::Info.apply();
     /// log::info!("This message will be logged");
     /// ```
     pub fn apply(self) -> Result<(), Box<dyn Error>> { self.apply_custom(None, false, false) }
@@ -338,4 +343,5 @@ mod tests {
             .expect("Failed to initialize logger");
         log::info!("This is a custom log");
     }
+    pub fn apply(self) { self.apply_custom(None, false) }
 }
