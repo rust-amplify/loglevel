@@ -24,3 +24,4 @@ chrono = { version = "0.4", features = ["serde"], optional = true }
 default = []
 json = ["serde", "serde_json", "chrono"]
 serde = ["dep:serde"]
+custom_level = []

@@ -3,6 +3,7 @@
 //! Simple way to set your log level
 
 use std::error::Error;
+use std::io::Write;
 use std::{env, fmt};
 
 #[cfg(feature = "json")]
@@ -12,8 +13,31 @@ use log::{LevelFilter, Record};
 #[cfg(feature = "json")]
 use serde::Serialize;
 
+#[cfg(feature = "json")]
+#[derive(Serialize)]
+struct JsonLog {
+    level: String,
+    message: String,
+    timestamp: String,
+}
+
+#[cfg(feature = "custom_level")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomLogLevel {
+    name: String,
+    value: u8,
+}
+
+#[cfg(feature = "custom_level")]
+impl CustomLogLevel {
+    pub fn new(name: String, value: u8) -> Self { Self { name, value } }
+    pub fn name(&self) -> &str { self.name.as_str() }
+    pub fn value(&self) -> u8 { self.value }
+}
+
 /// Represents desired logging verbosity level
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[repr(u8)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum LogLevel {
     /// Do not log anything. Corresponds to zero verbosity flags.
     None = 0,
@@ -28,14 +52,9 @@ pub enum LogLevel {
     Debug,
     /// Print all possible messages, including tracing information. Corresponds to `-vvvvv` flags.
     Trace,
-}
 
-#[cfg(feature = "json")]
-#[derive(Serialize)]
-struct JsonLog<'a> {
-    level: &'static str,
-    message: &'a str,
-    timestamp: String,
+    #[cfg(feature = "custom_level")]
+    Custom(CustomLogLevel),
 }
 
 impl fmt::Display for LogLevel {
@@ -47,6 +66,8 @@ impl fmt::Display for LogLevel {
             LogLevel::Info => "info",
             LogLevel::Debug => "debug",
             LogLevel::Trace => "trace",
+            #[cfg(feature = "custom_level")]
+            LogLevel::Custom(custom) => custom.name(),
         };
 
         // Just write the string representation of the enum variant to the formatter.
@@ -72,13 +93,32 @@ impl From<LogLevel> for LevelFilter {
             LogLevel::Info => LevelFilter::Info,
             LogLevel::Debug => LevelFilter::Debug,
             LogLevel::Trace => LevelFilter::Trace,
+            #[cfg(feature = "custom_level")]
+            LogLevel::Custom(custom) => match custom.value {
+                v if v <= 1 => LevelFilter::Error,
+                v if v <= 2 => LevelFilter::Warn,
+                v if v <= 3 => LevelFilter::Info,
+                v if v <= 4 => LevelFilter::Debug,
+                _ => LevelFilter::Trace,
+            },
         }
     }
 }
 
 impl LogLevel {
     /// Indicates number of required verbosity flags
-    pub fn verbosity_flag_count(&self) -> u8 { *self as u8 }
+    pub fn verbosity_flag_count(&self) -> u8 {
+        match self {
+            LogLevel::None => 0,
+            LogLevel::Error => 1,
+            LogLevel::Warn => 2,
+            LogLevel::Info => 3,
+            LogLevel::Debug => 4,
+            LogLevel::Trace => 5,
+            #[cfg(feature = "custom_level")]
+            LogLevel::Custom(custom) => custom.value,
+        }
+    }
 
     /// Logs a warning if the verbosity level exceeds 5, as it will be treated as `Trace`.
     pub fn from_verbosity_flag_count(level: u8) -> Self {
@@ -93,6 +133,11 @@ impl LogLevel {
             4 => LogLevel::Debug,
             _ => LogLevel::Trace,
         }
+    }
+
+    #[cfg(feature = "custom_level")]
+    pub fn custom(name: String, value: u8) -> Self {
+        LogLevel::Custom(CustomLogLevel::new(name, value))
     }
 
     /// Parses verbosity level from command-line arguments using `-v` flags.
@@ -120,10 +165,29 @@ impl LogLevel {
                     .action(clap::ArgAction::SetTrue)
                     .help("Enable JSON formatting"),
             )
+            .arg(
+                Arg::new("custom-level")
+                    .long("custom-level")
+                    .action(clap::ArgAction::Append)
+                    .help("Custom log level value (e.g., --custom-level http=10)"),
+            )
             .get_matches();
 
-        let matches = matches.get_count("verbose");
-        Ok(Self::from_verbosity_flag_count(matches))
+        let verbosity = matches.get_count("verbose");
+        #[cfg(feature = "custom_level")]
+        if let Some(custom_levels) = matches.get_many::<String>("custom-level") {
+            if let Some(custom) = custom_levels.clone().last() {
+                let parts = custom.split('=').collect::<Vec<&str>>();
+                if parts.len() == 2 {
+                    let name = parts[0].to_string();
+                    let value = parts[1].parse::<u8>()?;
+                    return Ok(LogLevel::custom(name.to_string(), value));
+                } else {
+                    return Err("Invalid custom log level format".into());
+                }
+            }
+        }
+        Ok(Self::from_verbosity_flag_count(verbosity))
     }
 
     /// Applies the log level to the system with optional custom `RUST_LOG` configuration.
@@ -153,9 +217,9 @@ impl LogLevel {
         custom_log: Option<String>,
         override_existing: bool,
         json: bool,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), Box<dyn Error + 'static>> {
         static INIT: std::sync::Once = std::sync::Once::new();
-        let filter = LevelFilter::from(*self);
+        let filter = LevelFilter::from(self.clone());
         INIT.call_once(|| {
             if override_existing || env::var("RUST_LOG").is_err() {
                 let log_value = custom_log.unwrap_or_else(|| self.to_string());
@@ -165,24 +229,31 @@ impl LogLevel {
             let mut builder = env_logger::Builder::from_env(
                 env_logger::Env::default().default_filter_or(self.to_string()),
             );
-            // .filter_level(filter)
-            // .try_init()
-            // .expect("Logger instantiation failed");
 
             if json {
                 #[cfg(feature = "json")]
                 {
-                    builder.format(|buf, record: &Record| {
+                    let this = self.clone();
+                    builder.format(move |buf, record: &Record| {
+                        let level_str = match &this {
+                            #[cfg(feature = "custom_level")]
+                            LogLevel::Custom(custom) => custom.name().to_string(),
+                            _ => record.level().as_str().to_string(),
+                        };
                         let json_log = JsonLog {
-                            level: record.level().as_str(),
-                            message: &record.args().to_string(),
+                            level: level_str,
+                            message: record.args().to_string(),
                             timestamp: Utc::now().to_rfc3339(),
                         };
 
-                        buf.write_fmt(format_args!(
-                            "{}\n",
-                            serde_json::to_string(&json_log).unwrap()
-                        ))
+                        let json_str = serde_json::to_string(&json_log)?;
+                        buf.write_all(json_str.as_bytes())?;
+                        buf.write_all(b"\n")
+
+                        // buf.write_fmt(format_args!(
+                        //     "{}\n",
+                        //     serde_json::to_string(&json_log).unwrap()
+                        // ))
                     });
                 }
 
@@ -195,7 +266,7 @@ impl LogLevel {
             builder
                 .filter_level(filter)
                 .try_init()
-                .expect("Json output failed, because its requires the json flag");
+                .expect("Logger initiation failed");
         });
 
         Ok(())
@@ -248,5 +319,23 @@ mod tests {
             .expect("Failed to initialize logger");
         log::info!("This is a JSON log");
         // Should output: {"level":"info","message":"This is a JSON log","timestamp":"..."}
+    }
+
+    #[test]
+    #[cfg(feature = "custom_level")]
+    fn test_custom_level() {
+        LogLevel::Custom(CustomLogLevel::new("http", 10))
+            .apply_custom(None, false, false)
+            .expect("Failed to initialize logger");
+        log::info!("This is a custom log");
+    }
+
+    #[test]
+    #[cfg(all(feature = "custom_level", feature = "json"))]
+    fn test_custom_level_json() {
+        LogLevel::Custom(CustomLogLevel::new("http", 10))
+            .apply_custom(None, false, true)
+            .expect("Failed to initialize logger");
+        log::info!("This is a custom log");
     }
 }
