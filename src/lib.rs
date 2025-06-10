@@ -317,7 +317,7 @@ mod tests {
     #[test]
     #[cfg(feature = "custom_level")]
     fn test_custom_level() {
-        LogLevel::Custom(CustomLogLevel::new("http", 10))
+        LogLevel::Custom(CustomLogLevel::new("http".to_string(), 10))
             .apply_custom(None, false, false)
             .expect("Failed to initialize logger");
         log::info!("This is a custom log");
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     #[cfg(all(feature = "custom_level", feature = "json"))]
     fn test_custom_level_json() {
-        LogLevel::Custom(CustomLogLevel::new("http", 10))
+        LogLevel::Custom(CustomLogLevel::new("http".to_string(), 10))
             .apply_custom(None, false, true)
             .expect("Failed to initialize logger");
         log::info!("This is a custom log");
