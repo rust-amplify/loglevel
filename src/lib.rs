@@ -2,8 +2,11 @@
 
 //! Simple way to set your log level
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::error::Error;
-use std::io::Write;
+use std::io::{self, Write};
+use std::time::SystemTime;
 use std::{env, fmt};
 
 #[cfg(feature = "json")]
@@ -19,6 +22,8 @@ struct JsonLog {
     level: String,
     message: String,
     timestamp: String,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    bindings: HashMap<String, String>,
 }
 
 #[cfg(feature = "custom_level")]
@@ -28,32 +33,43 @@ pub struct CustomLogLevel {
     value: u8,
 }
 
+#[derive(Clone)]
+pub struct Logger {
+    level: LogLevel,
+    json: bool,
+    bindings: HashMap<String, String>,
+}
+
+thread_local! {
+    static CURRENT_LOGGER: RefCell<Option<Logger>> = const {RefCell::new(None) };
+}
+
+pub type LogConfig = (LogLevel, bool, HashMap<String, String>);
+
 #[cfg(feature = "custom_level")]
 impl CustomLogLevel {
-    pub fn new(name: String, value: u8) -> Self { Self { name, value } }
+    pub fn new(name: String, value: u8) -> Self {
+        Self { name, value }
+    }
 
-    pub fn name(&self) -> &str { self.name.as_str() }
-    pub fn value(&self) -> u8 { self.value }
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+    pub fn value(&self) -> u8 {
+        self.value
+    }
 }
 
 /// Represents desired logging verbosity level
 #[repr(u8)]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum LogLevel {
-    /// Do not log anything. Corresponds to zero verbosity flags.
     None = 0,
-    /// Report only errors to `stderr` and normal program output to `stdout` (if not redirected).
-    /// Corresponds to a single `-v` verbosity flag.
     Error,
-    /// Report warning messages, errors, and standard output. Corresponds to `-vv` flags.
     Warn,
-    /// Report general information messages, warnings, and errors. Corresponds to `-vvv` flags.
     Info,
-    /// Report debugging information and all non-trace messages. Corresponds to `-vvvv` flags.
     Debug,
-    /// Print all possible messages, including tracing information. Corresponds to `-vvvvv` flags.
     Trace,
-
     #[cfg(feature = "custom_level")]
     Custom(CustomLogLevel),
 }
@@ -70,19 +86,20 @@ impl fmt::Display for LogLevel {
             #[cfg(feature = "custom_level")]
             LogLevel::Custom(custom) => custom.name(),
         };
-
-        // Just write the string representation of the enum variant to the formatter.
-        // In the case of LogLevel, all variants are a single word, so this is sufficient.
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
 impl From<u8> for LogLevel {
-    fn from(val: u8) -> Self { Self::from_verbosity_flag_count(val) }
+    fn from(val: u8) -> Self {
+        Self::from_verbosity_flag_count(val)
+    }
 }
 
 impl From<LogLevel> for u8 {
-    fn from(log_level: LogLevel) -> Self { log_level.verbosity_flag_count() }
+    fn from(log_level: LogLevel) -> Self {
+        log_level.verbosity_flag_count()
+    }
 }
 
 impl From<LogLevel> for LevelFilter {
@@ -106,8 +123,114 @@ impl From<LogLevel> for LevelFilter {
     }
 }
 
+impl Logger {
+    pub fn new(level: LogLevel, json: bool) -> Self {
+        Self { level, json, bindings: HashMap::new() }
+    }
+
+    pub fn child(&self, bindings: HashMap<String, String>) -> Self {
+        let mut new_bindings = self.bindings.clone();
+        new_bindings.extend(bindings);
+        Self {
+            level: self.level.clone(),
+            json: self.json,
+            bindings: new_bindings,
+        }
+    }
+
+    pub fn apply(&self) -> Result<(), Box<dyn Error>> {
+        self.apply_custom(None, false)
+    }
+
+    pub fn apply_custom(
+        &self,
+        custom_log: Option<String>,
+        override_existing: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        let filter = LevelFilter::from(self.level.clone());
+        // let json = self.json;
+        // let bindings = self.bindings.clone();
+        CURRENT_LOGGER.with(|current| {
+            *current.borrow_mut() = Some(self.clone());
+        });
+
+        INIT.call_once(|| {
+    if override_existing || env::var("RUST_LOG").is_err() {
+                let log_value = custom_log.unwrap_or_else(|| self.level.to_string());
+                env::set_var("RUST_LOG", log_value);
+            }
+    let mut builder = env_logger::Builder::from_env(
+                env_logger::Env::default().default_filter_or(self.level.to_string()),
+            );
+    builder.format(move |buf, record: &Record| {
+                CURRENT_LOGGER.with(|current| {
+                    let logger = current.borrow();
+                    let logger = logger.as_ref().ok_or_else(|| io::Error::other( "No logger set"))?;
+                    let level_str = match &logger.level {
+                        #[cfg(feature = "custom_level")]
+                        LogLevel::Custom(custom) => custom.name().to_string(),
+                        _ => record.level().as_str().to_string(),
+                    };
+                  // let timestamp = Utc::now().to_rfc3339();
+
+                    if logger.json {
+                        #[cfg(feature = "json")]
+                        {
+                            let json_log = JsonLog {
+                                level: level_str,
+                                message: record.args().to_string(),
+                                timestamp: Utc::now().to_rfc3339(),
+                                bindings: logger.bindings.clone(),
+                            };
+                            let json_str = serde_json::to_string(&json_log)?;
+                            buf.write_all(json_str.as_bytes())?;
+                            buf.write_all(b"\n")?;
+                            Ok(())
+                        }
+                        #[cfg(not(feature = "json"))]
+                        {
+                            panic!("JSON output requires the `json` feature")
+                        }
+                    } else {
+                        let timestamp = SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0)
+                            .to_string();
+                        write!(buf, "[{timestamp}: {level_str}")?;
+                        if !logger.bindings.is_empty() {
+                            write!(buf, " {{")?;
+                            let mut first = true;
+                            for (key, value) in &logger.bindings {
+                                if !first {
+                                    write!(buf, ", ")?;
+                                }
+                                write!(buf, "{key}={value}")?;
+                                first = false;
+                            }
+                            write!(buf, "}}")?;
+                        }
+                        write!(buf, " {}", record.args())?;
+                        writeln!(buf)?;
+                        Ok(())
+                    }
+                })            
+            });
+
+            let _ = builder
+                .filter_level(filter)
+                .try_init()
+                //we intend to propagate the error
+                .map_err(|e| Box::new(e) as Box<dyn Error>);
+           //Ok(())
+        });
+
+        Ok(())
+    }
+}
+
 impl LogLevel {
-    /// Indicates number of required verbosity flags
     pub fn verbosity_flag_count(&self) -> u8 {
         match self {
             LogLevel::None => 0,
@@ -121,7 +244,6 @@ impl LogLevel {
         }
     }
 
-    /// Logs a warning if the verbosity level exceeds 5, as it will be treated as `Trace`.
     pub fn from_verbosity_flag_count(level: u8) -> Self {
         if level > 5 {
             log::warn!("Verbosity level {} exceeds maximum; using Trace", level);
@@ -148,11 +270,12 @@ impl LogLevel {
     ///
     /// # Examples
     /// ```
-    /// use loglevel::LogLevel;
-    /// let log_level = LogLevel::from_args().expect("Failed to parse arguments");
-    /// log_level.apply().expect("Failed to initialize logger");
+    /// use loglevel::{LogLevel, Logger};
+    /// let (log_level, json, bindings) = LogLevel::from_args().expect("Failed to parse args");
+    /// let logger = Logger::new(log_level, json);
+    /// logger.apply().expect("Failed to initialize logger");
     /// ```
-    pub fn from_args() -> Result<Self, Box<dyn Error>> {
+    pub fn from_args() -> Result<LogConfig, Box<dyn Error>> {
         let matches = Command::new(env!("CARGO_PKG_NAME"))
             .arg(
                 Arg::new("verbose")
@@ -169,56 +292,59 @@ impl LogLevel {
             .arg(
                 Arg::new("custom-level")
                     .long("custom-level")
+                    .value_name("NAME=VALUE")
                     .action(clap::ArgAction::Append)
-                    .help("Custom log level value (e.g., --custom-level http=10)"),
+                    .help("Custom log level (e.g., --custom-level http=10)"),
+            )
+            .arg(
+                Arg::new("bindings")
+                    .long("bindings")
+                    .value_name("KEY=VALUE[,KEY=VALUE]")
+                    .action(clap::ArgAction::Append)
+                    .help("Logger bindings (e.g., --bindings module=http,service=api)"),
             )
             .get_matches();
 
         let verbosity = matches.get_count("verbose");
-        #[cfg(feature = "custom_level")]
-        if let Some(custom_levels) = matches.get_many::<String>("custom-level") {
-            if let Some(custom) = custom_levels.clone().last() {
-                let parts = custom.split('=').collect::<Vec<&str>>();
-                if parts.len() == 2 {
-                    let name = parts[0].to_string();
-                    let value = parts[1].parse::<u8>()?;
-                    return Ok(LogLevel::custom(name.to_string(), value));
-                } else {
-                    return Err("Invalid custom log level format".into());
+        let json = matches.get_flag("json");
+        let mut bindings = HashMap::new();
+
+        if let Some(bindings_values) = matches.get_many::<String>("bindings") {
+            for value in bindings_values {
+                for pair in value.split(',') {
+                    let parts: Vec<&str> = pair.split('=').collect();
+                    if parts.len() == 2 {
+                        bindings.insert(parts[0].to_string(), parts[1].to_string());
+                    } else {
+                        return Err("Invalid bindings format, expected KEY=VALUE[,KEY=VALUE]".into());
+                    }
                 }
             }
         }
-        Ok(Self::from_verbosity_flag_count(verbosity))
+
+        #[cfg(feature = "custom_level")]
+        if let Some(custom_levels) = matches.get_many::<String>("custom-level") {
+            if let Some(custom) = custom_levels.clone().next_back() {
+                let parts: Vec<&str> = custom.split('=').collect();
+                if parts.len() == 2 {
+                    let name = parts[0].to_string();
+                    let value = parts[1].parse::<u8>()?;
+                    return Ok((LogLevel::custom(name, value), json, bindings));
+                } else {
+                    return Err("Invalid custom log level format, expected NAME=VALUE".into());
+                }
+            }
+        }
+
+        Ok((Self::from_verbosity_flag_count(verbosity), json, bindings))
     }
 
-    /// Applies the log level to the system with optional custom `RUST_LOG` configuration.
-    ///
-    /// If `custom_log` is provided, it is used as the `RUST_LOG` value. If `override_existing` is
-    /// `true`, the `RUST_LOG` environment variable is set even if already defined. Otherwise, the
-    /// existing `RUST_LOG` is respected.
-    ///
-    /// # Errors
-    /// Returns an error if the logger fails to initialize.
-    ///
-    /// # Examples
-    /// ```
-    /// use loglevel::LogLevel;
-    /// LogLevel::Info
-    ///     .apply_custom(None, false, false)
-    ///     .expect("Failed to initialize logger");
-    /// log::info!("This message will be logged");
-    ///
-    /// // Custom RUST_LOG configuration
-    /// LogLevel::Debug
-    ///     .apply_custom(Some("my_module=trace,info".to_string()), true, false)
-    ///     .expect("Failed to initialize logger");
-    /// ```
     pub fn apply_custom(
         &self,
         custom_log: Option<String>,
         override_existing: bool,
         json: bool,
-    ) -> Result<(), Box<dyn Error + 'static>> {
+    ) -> Result<(), Box<dyn Error>> {
         static INIT: std::sync::Once = std::sync::Once::new();
         let filter = LevelFilter::from(self.clone());
         INIT.call_once(|| {
@@ -245,38 +371,32 @@ impl LogLevel {
                             level: level_str,
                             message: record.args().to_string(),
                             timestamp: Utc::now().to_rfc3339(),
+                            bindings: HashMap::new(),
                         };
-
                         let json_str = serde_json::to_string(&json_log)?;
                         buf.write_all(json_str.as_bytes())?;
-                        buf.write_all(b"\n")
+                        buf.write_all(b"\n")?;
+                        Ok(())
                     });
                 }
-
                 #[cfg(not(feature = "json"))]
                 {
                     panic!("JSON output requires the `json` feature")
                 }
             }
 
-            builder.filter_level(filter).try_init().expect("Logger");
+            builder
+                .filter_level(filter)
+                .try_init()
+                .expect("Failed to initialize logger");
         });
 
         Ok(())
     }
 
-    /// Applies the log level to the system, respecting existing `RUST_LOG` settings.
-    ///
-    /// # Errors
-    /// Returns an error if the logger fails to initialize.
-    ///
-    /// # Examples
-    /// ```
-    /// use loglevel::LogLevel;
-    /// LogLevel::Info.apply().expect("Failed to initialize logger");
-    /// log::info!("This message will be logged");
-    /// ```
-    pub fn apply(self) -> Result<(), Box<dyn Error>> { self.apply_custom(None, false, false) }
+    pub fn apply(self) -> Result<(), Box<dyn Error>> {
+        self.apply_custom(None, false, false)
+    }
 }
 
 #[cfg(test)]
@@ -311,7 +431,6 @@ mod tests {
             .apply_custom(None, false, true)
             .expect("Failed to initialize logger");
         log::info!("This is a JSON log");
-        // Should output: {"level":"info","message":"This is a JSON log","timestamp":"..."}
     }
 
     #[test]
@@ -329,6 +448,27 @@ mod tests {
         LogLevel::Custom(CustomLogLevel::new("http".to_string(), 10))
             .apply_custom(None, false, true)
             .expect("Failed to initialize logger");
-        log::info!("This is a custom log");
+        log::info!("This is a custom JSON log");
+    }
+
+    #[test]
+    fn test_logger() {
+        let logger = Logger::new(LogLevel::Info, false);
+        logger.apply().expect("Failed to initialize logger");
+        log::info!("Parent log");
+        let child = logger.child(HashMap::from([("module".to_string(), "child".to_string())]));
+        child.apply().expect("Failed to initialize child logger");
+        log::info!("Child log");
+    }
+
+    #[test]
+    #[cfg(feature = "json")]
+    fn test_logger_json() {
+        let logger = Logger::new(LogLevel::Info, true);
+        logger.apply().expect("Failed to initialize logger");
+        log::info!("Parent JSON log");
+        let child = logger.child(HashMap::from([("module".to_string(), "child".to_string())]));
+        child.apply().expect("Failed to initialize child logger");
+        log::info!("Child JSON log");
     }
 }

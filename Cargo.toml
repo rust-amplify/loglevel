@@ -20,8 +20,10 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
 chrono = { version = "0.4", features = ["serde"], optional = true }
 
+
+
+
 [features]
 default = []
-json = ["serde", "serde_json", "chrono"]
-serde = ["dep:serde"]
+json = ["dep:serde", "dep:serde_json", "dep:chrono"]
 custom_level = []
