@@ -48,16 +48,10 @@ pub type LogConfig = (LogLevel, bool, HashMap<String, String>);
 
 #[cfg(feature = "custom_level")]
 impl CustomLogLevel {
-    pub fn new(name: String, value: u8) -> Self {
-        Self { name, value }
-    }
+    pub fn new(name: String, value: u8) -> Self { Self { name, value } }
 
-    pub fn name(&self) -> &str {
-        self.name.as_str()
-    }
-    pub fn value(&self) -> u8 {
-        self.value
-    }
+    pub fn name(&self) -> &str { self.name.as_str() }
+    pub fn value(&self) -> u8 { self.value }
 }
 
 /// Represents desired logging verbosity level
@@ -91,15 +85,11 @@ impl fmt::Display for LogLevel {
 }
 
 impl From<u8> for LogLevel {
-    fn from(val: u8) -> Self {
-        Self::from_verbosity_flag_count(val)
-    }
+    fn from(val: u8) -> Self { Self::from_verbosity_flag_count(val) }
 }
 
 impl From<LogLevel> for u8 {
-    fn from(log_level: LogLevel) -> Self {
-        log_level.verbosity_flag_count()
-    }
+    fn from(log_level: LogLevel) -> Self { log_level.verbosity_flag_count() }
 }
 
 impl From<LogLevel> for LevelFilter {
@@ -138,9 +128,7 @@ impl Logger {
         }
     }
 
-    pub fn apply(&self) -> Result<(), Box<dyn Error>> {
-        self.apply_custom(None, false)
-    }
+    pub fn apply(&self) -> Result<(), Box<dyn Error>> { self.apply_custom(None, false) }
 
     pub fn apply_custom(
         &self,
@@ -156,23 +144,25 @@ impl Logger {
         });
 
         INIT.call_once(|| {
-    if override_existing || env::var("RUST_LOG").is_err() {
+            if override_existing || env::var("RUST_LOG").is_err() {
                 let log_value = custom_log.unwrap_or_else(|| self.level.to_string());
                 env::set_var("RUST_LOG", log_value);
             }
-    let mut builder = env_logger::Builder::from_env(
+            let mut builder = env_logger::Builder::from_env(
                 env_logger::Env::default().default_filter_or(self.level.to_string()),
             );
-    builder.format(move |buf, record: &Record| {
+            builder.format(move |buf, record: &Record| {
                 CURRENT_LOGGER.with(|current| {
                     let logger = current.borrow();
-                    let logger = logger.as_ref().ok_or_else(|| io::Error::other( "No logger set"))?;
+                    let logger = logger
+                        .as_ref()
+                        .ok_or_else(|| io::Error::other("No logger set"))?;
                     let level_str = match &logger.level {
                         #[cfg(feature = "custom_level")]
                         LogLevel::Custom(custom) => custom.name().to_string(),
                         _ => record.level().as_str().to_string(),
                     };
-                  // let timestamp = Utc::now().to_rfc3339();
+                    // let timestamp = Utc::now().to_rfc3339();
 
                     if logger.json {
                         #[cfg(feature = "json")]
@@ -215,7 +205,7 @@ impl Logger {
                         writeln!(buf)?;
                         Ok(())
                     }
-                })            
+                })
             });
 
             let _ = builder
@@ -223,7 +213,7 @@ impl Logger {
                 .try_init()
                 //we intend to propagate the error
                 .map_err(|e| Box::new(e) as Box<dyn Error>);
-           //Ok(())
+            //Ok(())
         });
 
         Ok(())
@@ -316,7 +306,9 @@ impl LogLevel {
                     if parts.len() == 2 {
                         bindings.insert(parts[0].to_string(), parts[1].to_string());
                     } else {
-                        return Err("Invalid bindings format, expected KEY=VALUE[,KEY=VALUE]".into());
+                        return Err(
+                            "Invalid bindings format, expected KEY=VALUE[,KEY=VALUE]".into()
+                        );
                     }
                 }
             }
@@ -394,9 +386,7 @@ impl LogLevel {
         Ok(())
     }
 
-    pub fn apply(self) -> Result<(), Box<dyn Error>> {
-        self.apply_custom(None, false, false)
-    }
+    pub fn apply(self) -> Result<(), Box<dyn Error>> { self.apply_custom(None, false, false) }
 }
 
 #[cfg(test)]
