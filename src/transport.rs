@@ -219,20 +219,22 @@ pub fn format_log(record: &Record, logger: &Logger) -> io::Result<String> {
             .unwrap_or(0)
             .to_string();
         let mut output = String::new();
-        write!(output, "[{timestamp}: {level_str}");
+        write!(output, "[{timestamp}: {level_str}")
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         if !logger.bindings.is_empty() {
-            write!(output, " {{");
+            write!(output, " {{").map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             let mut first = true;
             for (key, value) in &logger.bindings {
                 if !first {
-                    write!(output, ", ");
+                    write!(output, ", ").map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
                 }
-                write!(output, "{key}={value}");
+                write!(output, "{key}={value}")
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
                 first = false;
             }
-            write!(output, "}}");
+            write!(output, "}}").map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         }
-        write!(output, " {}", record.args());
+        write!(output, "{}", record.args()).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         Ok(output)
     }
 }
