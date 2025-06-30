@@ -3,8 +3,7 @@ use std::error::Error;
 use loglevel::{LogLevel, Logger};
 fn main() -> Result<(), Box<dyn Error>> {
     let (log_level, json, bindings) = LogLevel::from_args()?;
-    //let bindings = bindings.unwrap_or_default();
-    let logger = Logger::new(log_level, json);
+    let logger = Logger::new(log_level, json, None);
     logger.apply()?;
     log::error!("Parent: error message");
     log::warn!("Parent: warning message");

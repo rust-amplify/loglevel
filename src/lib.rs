@@ -2,10 +2,13 @@
 
 //! Simple way to set your log level
 
+pub(crate) mod transport;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{self, Write};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use std::{env, fmt};
 
@@ -15,6 +18,9 @@ use clap::{Arg, Command};
 use log::{LevelFilter, Record};
 #[cfg(feature = "json")]
 use serde::Serialize;
+use transport::{
+    ConsoleTransport, FileTransport, Transport, TransportConfig, TransportDestination,
+};
 
 #[cfg(feature = "json")]
 #[derive(Serialize)]
@@ -38,10 +44,12 @@ pub struct Logger {
     level: LogLevel,
     json: bool,
     bindings: HashMap<String, String>,
+    transport: Option<Vec<TransportConfig>>,
 }
 
 thread_local! {
     static CURRENT_LOGGER: RefCell<Option<Logger>> = const {RefCell::new(None) };
+    static TRANSPORTS: RefCell<Option<Vec<std::sync::Arc<Mutex<Box<dyn Transport>> >>>> = const { RefCell::new(None) };
 }
 
 pub type LogConfig = (LogLevel, bool, HashMap<String, String>);
@@ -58,13 +66,22 @@ impl CustomLogLevel {
 #[repr(u8)]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum LogLevel {
+    /// Do not log anything. Corresponds to zero verbosity flags.
     None = 0,
+    /// Report only errors to `stderr` and normal program output to `stdout` (if not redirected).
+    /// Corresponds to a single `-v` verbosity flag.
     Error,
+    /// Report warning messages, errors, and standard output. Corresponds to `-vv` flags.
     Warn,
+    /// Report general information messages, warnings, and errors. Corresponds to `-vvv` flags.
     Info,
+    /// Report debugging information and all non-trace messages. Corresponds to `-vvvv` flags.
     Debug,
+    /// Print all possible messages, including tracing information. Corresponds to `-vvvvv` flags.
     Trace,
     #[cfg(feature = "custom_level")]
+    /// Report custom level, debug, info, warnings and errors to `stderr` and normal program output
+    /// to `stdout` (if not redirected). Corresponds to a custom verbosity flag.
     Custom(CustomLogLevel),
 }
 
@@ -114,8 +131,8 @@ impl From<LogLevel> for LevelFilter {
 }
 
 impl Logger {
-    pub fn new(level: LogLevel, json: bool) -> Self {
-        Self { level, json, bindings: HashMap::new() }
+    pub fn new(level: LogLevel, json: bool, transport: Option<Vec<TransportConfig>>) -> Self {
+        Self { level, json, bindings: HashMap::new(), transport }
     }
 
     pub fn child(&self, bindings: HashMap<String, String>) -> Self {
@@ -125,6 +142,7 @@ impl Logger {
             level: self.level.clone(),
             json: self.json,
             bindings: new_bindings,
+            transport: self.transport.clone(),
         }
     }
 
@@ -137,10 +155,46 @@ impl Logger {
     ) -> Result<(), Box<dyn Error>> {
         static INIT: std::sync::Once = std::sync::Once::new();
         let filter = LevelFilter::from(self.level.clone());
-        // let json = self.json;
-        // let bindings = self.bindings.clone();
         CURRENT_LOGGER.with(|current| {
             *current.borrow_mut() = Some(self.clone());
+        });
+
+        let transports: Vec<Arc<Mutex<Box<dyn Transport>>>> = self
+            .transport
+            .as_ref()
+            .map(|configs| {
+                configs
+                    .iter()
+                    .map(|config| match &config.destination {
+                        TransportDestination::Console => Ok(Arc::new(Mutex::new(Box::new(
+                            ConsoleTransport::new(config.level.clone()),
+                        )
+                            as Box<dyn Transport>))),
+                        TransportDestination::File { path, append } => {
+                            FileTransport::new(path, *append, config.level.clone())
+                                .map(|t| Arc::new(Mutex::new(Box::new(t) as Box<dyn Transport>)))
+                        } /* #[cfg(feature = "remote")]
+                           * TransportDestination::Remote { url } => {
+                           *     RemoteTransport::new(url.clone(), config.level.clone())
+                           *         .map(|t| Arc::new(Mutex::new(Box::new(t) as Box<dyn
+                           * Transport>))) }
+                           * #[cfg(not(feature = "remote"))]
+                           * TransportDestination::Remote { .. } => Err(io::Error::new(
+                           *     io::ErrorKind::Other,
+                           *     "Remote transport is not enabled",
+                           * )), */
+                    })
+                    .collect::<io::Result<Vec<_>>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        TRANSPORTS.with(|transport| {
+            *transport.borrow_mut() = Some(transports.clone());
+        });
+
+        TRANSPORTS.with(|t| {
+            *t.borrow_mut() = Some(transports.clone());
         });
 
         INIT.call_once(|| {
@@ -151,69 +205,96 @@ impl Logger {
             let mut builder = env_logger::Builder::from_env(
                 env_logger::Env::default().default_filter_or(self.level.to_string()),
             );
+
             builder.format(move |buf, record: &Record| {
                 CURRENT_LOGGER.with(|current| {
                     let logger = current.borrow();
                     let logger = logger
                         .as_ref()
                         .ok_or_else(|| io::Error::other("No logger set"))?;
-                    let level_str = match &logger.level {
-                        #[cfg(feature = "custom_level")]
-                        LogLevel::Custom(custom) => custom.name().to_string(),
-                        _ => record.level().as_str().to_string(),
-                    };
-                    // let timestamp = Utc::now().to_rfc3339();
 
-                    if logger.json {
-                        #[cfg(feature = "json")]
-                        {
-                            let json_log = JsonLog {
-                                level: level_str,
-                                message: record.args().to_string(),
-                                timestamp: Utc::now().to_rfc3339(),
-                                bindings: logger.bindings.clone(),
-                            };
-                            let json_str = serde_json::to_string(&json_log)?;
-                            buf.write_all(json_str.as_bytes())?;
-                            buf.write_all(b"\n")?;
+                    TRANSPORTS.with(|transports| {
+                        let transports = transports.borrow();
+                        let transports = match transports.as_ref() {
+                            Some(t) => t,
+                            None => {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::Other,
+                                    "No transports set",
+                                ));
+                            }
+                        };
+
+                        for transport in transports.iter() {
+                            if let Ok(mut transport) = transport.lock() {
+                                if let Err(e) = transport.send(record, logger) {
+                                    eprintln!("Transport error: {}", e);
+                                }
+                            }
+                        }
+
+                        Ok(())
+                    })?;
+
+                    if transports.is_empty() {
+                        let level_str = match &logger.level {
+                            #[cfg(feature = "custom_level")]
+                            LogLevel::Custom(custom) => custom.name().to_string(),
+                            _ => record.level().as_str().to_string(),
+                        };
+                        if logger.json {
+                            #[cfg(feature = "json")]
+                            {
+                                let json_log = JsonLog {
+                                    level: level_str,
+                                    message: record.args().to_string(),
+                                    timestamp: Utc::now().to_rfc3339(),
+                                    bindings: logger.bindings.clone(),
+                                };
+                                let json_str = serde_json::to_string(&json_log)
+                                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                                buf.write_all(json_str.as_bytes())?;
+                                buf.write_all(b"\n")?;
+                                Ok(())
+                            }
+                            #[cfg(not(feature = "json"))]
+                            {
+                                panic!("JSON output requires the `json` feature")
+                            }
+                        } else {
+                            let timestamp = SystemTime::now()
+                                .duration_since(SystemTime::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0)
+                                .to_string();
+                            write!(buf, "[{timestamp}: {level_str}")?;
+                            if !logger.bindings.is_empty() {
+                                write!(buf, " {{")?;
+                                let mut first = true;
+                                for (key, value) in &logger.bindings {
+                                    if !first {
+                                        write!(buf, ", ")?;
+                                    }
+                                    write!(buf, "{key}={value}")?;
+                                    first = false;
+                                }
+                                write!(buf, "}}")?;
+                            }
+                            write!(buf, " {}", record.args())?;
+                            writeln!(buf)?;
                             Ok(())
                         }
-                        #[cfg(not(feature = "json"))]
-                        {
-                            panic!("JSON output requires the `json` feature")
-                        }
                     } else {
-                        let timestamp = SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0)
-                            .to_string();
-                        write!(buf, "[{timestamp}: {level_str}")?;
-                        if !logger.bindings.is_empty() {
-                            write!(buf, " {{")?;
-                            let mut first = true;
-                            for (key, value) in &logger.bindings {
-                                if !first {
-                                    write!(buf, ", ")?;
-                                }
-                                write!(buf, "{key}={value}")?;
-                                first = false;
-                            }
-                            write!(buf, "}}")?;
-                        }
-                        write!(buf, " {}", record.args())?;
-                        writeln!(buf)?;
                         Ok(())
                     }
                 })
             });
 
-            let _ = builder
+            builder
                 .filter_level(filter)
                 .try_init()
-                //we intend to propagate the error
-                .map_err(|e| Box::new(e) as Box<dyn Error>);
-            //Ok(())
+                .map_err(|e| Box::new(e) as Box<dyn Error>)
+                .expect("Failed to initialize logger")
         });
 
         Ok(())
@@ -262,7 +343,7 @@ impl LogLevel {
     /// ```
     /// use loglevel::{LogLevel, Logger};
     /// let (log_level, json, bindings) = LogLevel::from_args().expect("Failed to parse args");
-    /// let logger = Logger::new(log_level, json);
+    /// let logger = Logger::new(log_level, json, None);
     /// logger.apply().expect("Failed to initialize logger");
     /// ```
     pub fn from_args() -> Result<LogConfig, Box<dyn Error>> {
@@ -443,7 +524,7 @@ mod tests {
 
     #[test]
     fn test_logger() {
-        let logger = Logger::new(LogLevel::Info, false);
+        let logger = Logger::new(LogLevel::Info, false, None);
         logger.apply().expect("Failed to initialize logger");
         log::info!("Parent log");
         let child = logger.child(HashMap::from([("module".to_string(), "child".to_string())]));
