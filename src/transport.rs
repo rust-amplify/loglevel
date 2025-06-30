@@ -10,6 +10,8 @@ use std::time::SystemTime;
 use chrono::Utc;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use log::{Level, Record};
+#[cfg(feature = "remote")]
+use reqwest;
 #[cfg(feature = "json")]
 use serde::Serialize;
 
@@ -134,17 +136,18 @@ impl FileTransport {
 #[cfg(feature = "remote")]
 impl RemoteTransport {
     pub fn new(url: String, level: LogLevel) -> io::Result<Self> {
-        let client = reqwest::blocking::Client::new();
         let (sender, receiver): (Sender<String>, Receiver<String>) = bounded(100);
         let url_clone = url.clone();
         thread::spawn(move || {
+            let client = reqwest::blocking::Client::new();
             while let Ok(message) = receiver.recv() {
                 if let Err(e) = client.post(&url_clone).body(message).send() {
                     eprintln!("RemoteTransport error: {}", e);
                 }
             }
         });
-        Ok(Self { client, url, sender, level })
+
+        Ok(Self { url, sender, level })
     }
 }
 

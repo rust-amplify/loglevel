@@ -20,8 +20,7 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
 chrono = { version = "0.4", features = ["serde"], optional = true }
 crossbeam-channel = "0.5.15"
-reqwest = { version = "0.11", features = ["json"], optional = true }
-
+reqwest = { version = "0.11", features = ["blocking", "json"], optional = true }
 
 
 
@@ -30,3 +29,4 @@ default = []
 json = ["dep:serde", "dep:serde_json", "dep:chrono"]
 custom_level = []
 remote = ["reqwest"]
+reqwest = ["dep:reqwest"]

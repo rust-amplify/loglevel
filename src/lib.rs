@@ -18,6 +18,8 @@ use clap::{Arg, Command};
 use log::{LevelFilter, Record};
 #[cfg(feature = "json")]
 use serde::Serialize;
+#[cfg(feature = "remote")]
+use transport::RemoteTransport;
 use transport::{
     ConsoleTransport, FileTransport, Transport, TransportConfig, TransportDestination,
 };
@@ -173,12 +175,12 @@ impl Logger {
                         TransportDestination::File { path, append } => {
                             FileTransport::new(path, *append, config.level.clone())
                                 .map(|t| Arc::new(Mutex::new(Box::new(t) as Box<dyn Transport>)))
-                        } /* #[cfg(feature = "remote")]
-                           * TransportDestination::Remote { url } => {
-                           *     RemoteTransport::new(url.clone(), config.level.clone())
-                           *         .map(|t| Arc::new(Mutex::new(Box::new(t) as Box<dyn
-                           * Transport>))) }
-                           * #[cfg(not(feature = "remote"))]
+                        }
+                        #[cfg(feature = "remote")]
+                        TransportDestination::Remote { url } => {
+                            RemoteTransport::new(url.clone(), config.level.clone())
+                                .map(|t| Arc::new(Mutex::new(Box::new(t) as Box<dyn Transport>)))
+                        } /* #[cfg(not(feature = "remote"))]
                            * TransportDestination::Remote { .. } => Err(io::Error::new(
                            *     io::ErrorKind::Other,
                            *     "Remote transport is not enabled",
