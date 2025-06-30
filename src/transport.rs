@@ -10,8 +10,6 @@ use std::time::SystemTime;
 use chrono::Utc;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use log::{Level, Record};
-#[cfg(feature = "remote")]
-use reqwest;
 #[cfg(feature = "json")]
 use serde::Serialize;
 
@@ -97,7 +95,7 @@ impl ConsoleTransport {
         let (sender, receiver): (Sender<String>, Receiver<String>) = bounded(100);
         thread::spawn(move || {
             while let Ok(message) = receiver.recv() {
-                println!("{}", message);
+                println!("{message}");
             }
         });
         Self { sender, level }
@@ -118,13 +116,13 @@ impl FileTransport {
             while let Ok(message) = receiver.recv() {
                 if let Ok(mut file_guard) = file_writer.lock() {
                     if let Err(e) = file_guard.write_all(message.as_bytes()) {
-                        eprintln!("FileTransport error: {}", e);
+                        eprintln!("FileTransport error: {e}");
                     }
                     if let Err(e) = file_guard.write_all(b"\n") {
-                        eprintln!("FileTransport error: {}", e);
+                        eprintln!("FileTransport error: {e}");
                     }
                     if let Err(e) = file_guard.flush() {
-                        eprintln!("FileTransport flush error: {}", e);
+                        eprintln!("FileTransport flush error: {e}");
                     }
                 }
             }
@@ -147,7 +145,9 @@ impl RemoteTransport {
             }
         });
 
-        Ok(Self { url, sender, level })
+        let client = reqwest::blocking::Client::new();
+
+        Ok(Self { url, sender, level, client })
     }
 }
 
@@ -155,9 +155,7 @@ impl Transport for ConsoleTransport {
     fn send(&mut self, record: &Record, logger: &Logger) -> io::Result<()> {
         if is_level_enabled(record.level(), self.level.clone()) {
             let message = format_log(record, logger)?;
-            self.sender
-                .send(message)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            self.sender.send(message).map_err(|e| io::Error::other(e))?;
         }
         Ok(())
     }
@@ -167,9 +165,7 @@ impl Transport for FileTransport {
     fn send(&mut self, record: &Record, logger: &Logger) -> io::Result<()> {
         if is_level_enabled(record.level(), self.level.clone()) {
             let message = format_log(record, logger)?;
-            self.sender
-                .send(message)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            self.sender.send(message).map_err(|e| io::Error::other(e))?;
         }
         Ok(())
     }
@@ -219,22 +215,20 @@ pub fn format_log(record: &Record, logger: &Logger) -> io::Result<String> {
             .unwrap_or(0)
             .to_string();
         let mut output = String::new();
-        write!(output, "[{timestamp}: {level_str}")
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        write!(output, "[{timestamp}: {level_str}").map_err(|e| io::Error::other(e))?;
         if !logger.bindings.is_empty() {
-            write!(output, " {{").map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            write!(output, " {{").map_err(|e| io::Error::other(e))?;
             let mut first = true;
             for (key, value) in &logger.bindings {
                 if !first {
-                    write!(output, ", ").map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    write!(output, ", ").map_err(|e| io::Error::other(e))?;
                 }
-                write!(output, "{key}={value}")
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                write!(output, "{key}={value}").map_err(|e| io::Error::other(e))?;
                 first = false;
             }
-            write!(output, "}}").map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            write!(output, "}}").map_err(|e| io::Error::other(e))?;
         }
-        write!(output, "{}", record.args()).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        write!(output, "{}", record.args()).map_err(|e| io::Error::other(e))?;
         Ok(output)
     }
 }

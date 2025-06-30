@@ -220,17 +220,14 @@ impl Logger {
                         let transports = match transports.as_ref() {
                             Some(t) => t,
                             None => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::Other,
-                                    "No transports set",
-                                ));
+                                return Err(io::Error::other("No transports set"));
                             }
                         };
 
                         for transport in transports.iter() {
                             if let Ok(mut transport) = transport.lock() {
                                 if let Err(e) = transport.send(record, logger) {
-                                    eprintln!("Transport error: {}", e);
+                                    eprintln!("Transport error: {e}");
                                 }
                             }
                         }
@@ -319,7 +316,7 @@ impl LogLevel {
 
     pub fn from_verbosity_flag_count(level: u8) -> Self {
         if level > 5 {
-            log::warn!("Verbosity level {} exceeds maximum; using Trace", level);
+            log::warn!("Verbosity level {level} exceeds maximum; using Trace");
         }
         match level {
             0 => LogLevel::None,
@@ -537,7 +534,7 @@ mod tests {
     #[test]
     #[cfg(feature = "json")]
     fn test_logger_json() {
-        let logger = Logger::new(LogLevel::Info, true);
+        let logger = Logger::new(LogLevel::Info, true, None);
         logger.apply().expect("Failed to initialize logger");
         log::info!("Parent JSON log");
         let child = logger.child(HashMap::from([("module".to_string(), "child".to_string())]));
