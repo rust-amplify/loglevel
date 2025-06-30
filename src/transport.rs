@@ -54,6 +54,7 @@ pub struct ConsoleTransport {
 }
 
 pub struct FileTransport {
+    #[allow(dead_code)]
     file: Arc<Mutex<std::fs::File>>,
     sender: Sender<String>,
     level: LogLevel,
@@ -61,7 +62,9 @@ pub struct FileTransport {
 
 #[cfg(feature = "remote")]
 pub struct RemoteTransport {
+    #[allow(dead_code)]
     client: reqwest::blocking::Client,
+    #[allow(dead_code)]
     url: String,
     sender: Sender<String>,
     level: LogLevel,
@@ -140,7 +143,7 @@ impl RemoteTransport {
             let client = reqwest::blocking::Client::new();
             while let Ok(message) = receiver.recv() {
                 if let Err(e) = client.post(&url_clone).body(message).send() {
-                    eprintln!("RemoteTransport error: {}", e);
+                    eprintln!("RemoteTransport error: {e}");
                 }
             }
         });
@@ -155,7 +158,7 @@ impl Transport for ConsoleTransport {
     fn send(&mut self, record: &Record, logger: &Logger) -> io::Result<()> {
         if is_level_enabled(record.level(), self.level.clone()) {
             let message = format_log(record, logger)?;
-            self.sender.send(message).map_err(|e| io::Error::other(e))?;
+            self.sender.send(message).map_err(io::Error::other)?;
         }
         Ok(())
     }
@@ -165,7 +168,7 @@ impl Transport for FileTransport {
     fn send(&mut self, record: &Record, logger: &Logger) -> io::Result<()> {
         if is_level_enabled(record.level(), self.level.clone()) {
             let message = format_log(record, logger)?;
-            self.sender.send(message).map_err(|e| io::Error::other(e))?;
+            self.sender.send(message).map_err(io::Error::other)?;
         }
         Ok(())
     }
@@ -176,9 +179,7 @@ impl Transport for RemoteTransport {
     fn send(&mut self, record: &Record, logger: &Logger) -> io::Result<()> {
         if is_level_enabled(record.level(), self.level.clone()) {
             let message = format_log(record, logger)?;
-            self.sender
-                .send(message)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            self.sender.send(message).map_err(io::Error::other)?;
         }
         Ok(())
     }
@@ -200,8 +201,7 @@ pub fn format_log(record: &Record, logger: &Logger) -> io::Result<String> {
                 timestamp: Utc::now().to_rfc3339(),
                 bindings: logger.bindings.clone(),
             };
-            let json_str = serde_json::to_string(&json_log)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let json_str = serde_json::to_string(&json_log).map_err(io::Error::other)?;
             Ok(json_str)
         }
         #[cfg(not(feature = "json"))]
@@ -215,20 +215,20 @@ pub fn format_log(record: &Record, logger: &Logger) -> io::Result<String> {
             .unwrap_or(0)
             .to_string();
         let mut output = String::new();
-        write!(output, "[{timestamp}: {level_str}").map_err(|e| io::Error::other(e))?;
+        write!(output, "[{timestamp}: {level_str}").map_err(io::Error::other)?;
         if !logger.bindings.is_empty() {
-            write!(output, " {{").map_err(|e| io::Error::other(e))?;
+            write!(output, " {{").map_err(io::Error::other)?;
             let mut first = true;
             for (key, value) in &logger.bindings {
                 if !first {
-                    write!(output, ", ").map_err(|e| io::Error::other(e))?;
+                    write!(output, ", ").map_err(io::Error::other)?;
                 }
-                write!(output, "{key}={value}").map_err(|e| io::Error::other(e))?;
+                write!(output, "{key}={value}").map_err(io::Error::other)?;
                 first = false;
             }
-            write!(output, "}}").map_err(|e| io::Error::other(e))?;
+            write!(output, "}}").map_err(io::Error::other)?;
         }
-        write!(output, "{}", record.args()).map_err(|e| io::Error::other(e))?;
+        write!(output, "{}", record.args()).map_err(io::Error::other)?;
         Ok(output)
     }
 }

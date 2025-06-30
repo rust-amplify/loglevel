@@ -49,9 +49,16 @@ pub struct Logger {
     transport: Option<Vec<TransportConfig>>,
 }
 
+type TransportBox = Box<dyn Transport>;
+type TransportRef = Arc<Mutex<TransportBox>>;
+type TransportList = Vec<TransportRef>;
+
 thread_local! {
+    // Keep the original type for CURRENT_LOGGER
     static CURRENT_LOGGER: RefCell<Option<Logger>> = const {RefCell::new(None) };
-    static TRANSPORTS: RefCell<Option<Vec<std::sync::Arc<Mutex<Box<dyn Transport>> >>>> = const { RefCell::new(None) };
+
+    // Update TRANSPORTS to use tyoe alias
+    static TRANSPORTS: RefCell<Option<TransportList>> = const { RefCell::new(None) };
 }
 
 pub type LogConfig = (LogLevel, bool, HashMap<String, String>);
@@ -250,8 +257,8 @@ impl Logger {
                                     timestamp: Utc::now().to_rfc3339(),
                                     bindings: logger.bindings.clone(),
                                 };
-                                let json_str = serde_json::to_string(&json_log)
-                                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                                let json_str =
+                                    serde_json::to_string(&json_log).map_err(io::Error::other)?;
                                 buf.write_all(json_str.as_bytes())?;
                                 buf.write_all(b"\n")?;
                                 Ok(())
