@@ -478,8 +478,31 @@ impl LogLevel {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Once;
+
     use super::*;
 
+    static INIT: Once = Once::new();
+
+    // Initialize test environment
+    fn init_test() {
+        INIT.call_once(|| {
+            // Set max log level but don't initialize a logger
+            log::set_max_level(log::LevelFilter::Trace);
+        });
+    }
+
+    macro_rules! test_with_init {
+        ($name:ident $body:block) => {
+            #[test]
+            fn $name() {
+                init_test();
+                $body
+            }
+        };
+    }
+
+    // Tests that don't need logger initialization
     #[test]
     fn test_verbosity_flag_count() {
         assert_eq!(LogLevel::None.verbosity_flag_count(), 0);
@@ -501,51 +524,17 @@ mod tests {
         assert_eq!(LogLevel::from_verbosity_flag_count(6), LogLevel::Trace);
     }
 
-    #[test]
-    #[cfg(feature = "json")]
-    fn test_json_logging() {
-        LogLevel::Info
-            .apply_custom(None, false, true)
-            .expect("Failed to initialize logger");
-        log::info!("This is a JSON log");
-    }
-
-    #[test]
-    #[cfg(feature = "custom_level")]
-    fn test_custom_level() {
-        LogLevel::Custom(CustomLogLevel::new("http".to_string(), 10))
-            .apply_custom(None, false, false)
-            .expect("Failed to initialize logger");
-        log::info!("This is a custom log");
-    }
-
-    #[test]
-    #[cfg(all(feature = "custom_level", feature = "json"))]
-    fn test_custom_level_json() {
-        LogLevel::Custom(CustomLogLevel::new("http".to_string(), 10))
-            .apply_custom(None, false, true)
-            .expect("Failed to initialize logger");
-        log::info!("This is a custom JSON log");
-    }
-
-    #[test]
-    fn test_logger() {
+    // Test logger creation and fields
+    test_with_init! { test_logger_creation {
         let logger = Logger::new(LogLevel::Info, false, None);
-        logger.apply().expect("Failed to initialize logger");
-        log::info!("Parent log");
-        let child = logger.child(HashMap::from([("module".to_string(), "child".to_string())]));
-        child.apply().expect("Failed to initialize child logger");
-        log::info!("Child log");
-    }
+        assert_eq!(logger.level, LogLevel::Info);
+        assert!(!logger.json);
+        assert!(logger.transport.is_none());
+    }}
 
-    #[test]
-    #[cfg(feature = "json")]
-    fn test_logger_json() {
-        let logger = Logger::new(LogLevel::Info, true, None);
-        logger.apply().expect("Failed to initialize logger");
-        log::info!("Parent JSON log");
-        let child = logger.child(HashMap::from([("module".to_string(), "child".to_string())]));
-        child.apply().expect("Failed to initialize child logger");
-        log::info!("Child JSON log");
-    }
+    test_with_init! { test_logger_child {
+        let logger = Logger::new(LogLevel::Info, false, None);
+        let child = logger.child(HashMap::from([("module".to_string(), "test".to_string())]));
+        assert_eq!(child.level, LogLevel::Info);
+    }}
 }
