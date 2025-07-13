@@ -10,7 +10,7 @@ homepage = "https://github.com/rust-amplify"
 license = "Apache-2.0"
 readme = "README.md"
 edition = "2021"
-rust-version = "1.74.0"
+rust-version = "1.75.0"
 
 [dependencies]
 log = { version = "0.4.22", features = ["max_level_trace", "release_max_level_debug"] }
