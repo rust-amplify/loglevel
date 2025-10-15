@@ -1,17 +1,23 @@
 use std::error::Error;
 
-use loglevel::LogLevel;
-
+use loglevel::{LogLevel, Logger};
 fn main() -> Result<(), Box<dyn Error>> {
-    let log_level = LogLevel::from_args();
+    let (log_level, json, bindings) = LogLevel::from_args()?;
+    let logger = Logger::new(log_level, json, None);
+    logger.apply()?;
+    log::error!("Parent: error message");
+    log::warn!("Parent: warning message");
+    log::info!("Parent: info message");
+    log::debug!("Parent: debug message");
+    log::trace!("Parent: trace message");
 
-    log_level.apply();
-
-    log::error!("This is an error");
-    log::warn!("This is a warning");
-    log::info!("This is an info");
-    log::debug!("This is a debug");
-    log::trace!("This is a trace");
+    let child = logger.child(bindings.clone());
+    child.apply()?;
+    log::error!("Child: error message");
+    log::warn!("Child: warning message");
+    log::info!("Child: info message");
+    log::debug!("Child: debug message");
+    log::trace!("Child: trace message");
 
     Ok(())
 }
